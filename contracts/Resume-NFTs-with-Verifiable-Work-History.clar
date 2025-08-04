@@ -357,3 +357,160 @@
 (define-read-only (get-badge-owner (resume-id uint) (badge-id uint))
     (nft-get-owner? achievement-badge {resume-id: resume-id, badge-id: badge-id})
 )
+
+(define-constant err-privacy-restricted (err u107))
+
+(define-map resume-privacy-settings
+    uint
+    {
+        is-public: bool,
+        allow-skill-viewing: bool,
+        allow-experience-viewing: bool,
+        allow-badge-viewing: bool
+    }
+)
+
+(define-map authorized-viewers
+    {resume-id: uint, viewer: principal}
+    {
+        granted-at: uint,
+        can-view-experiences: bool,
+        can-view-skills: bool,
+        can-view-badges: bool
+    }
+)
+
+(define-public (set-privacy-settings
+    (resume-id uint)
+    (is-public bool)
+    (allow-skill-viewing bool)
+    (allow-experience-viewing bool)
+    (allow-badge-viewing bool)
+)
+    (let
+        (
+            (resume (unwrap! (get-resume resume-id) err-not-found))
+        )
+        (asserts! (is-eq (get owner resume) tx-sender) err-unauthorized)
+        (map-set resume-privacy-settings resume-id
+            {
+                is-public: is-public,
+                allow-skill-viewing: allow-skill-viewing,
+                allow-experience-viewing: allow-experience-viewing,
+                allow-badge-viewing: allow-badge-viewing
+            }
+        )
+        (ok true)
+    )
+)
+
+(define-public (grant-viewer-access
+    (resume-id uint)
+    (viewer principal)
+    (can-view-experiences bool)
+    (can-view-skills bool)
+    (can-view-badges bool)
+)
+    (let
+        (
+            (resume (unwrap! (get-resume resume-id) err-not-found))
+        )
+        (asserts! (is-eq (get owner resume) tx-sender) err-unauthorized)
+        (map-set authorized-viewers {resume-id: resume-id, viewer: viewer}
+            {
+                granted-at: burn-block-height,
+                can-view-experiences: can-view-experiences,
+                can-view-skills: can-view-skills,
+                can-view-badges: can-view-badges
+            }
+        )
+        (ok true)
+    )
+)
+
+(define-public (revoke-viewer-access (resume-id uint) (viewer principal))
+    (let
+        (
+            (resume (unwrap! (get-resume resume-id) err-not-found))
+        )
+        (asserts! (is-eq (get owner resume) tx-sender) err-unauthorized)
+        (map-delete authorized-viewers {resume-id: resume-id, viewer: viewer})
+        (ok true)
+    )
+)
+
+(define-read-only (can-view-resume-data (resume-id uint) (viewer principal) (data-type (string-ascii 20)))
+    (let
+        (
+            (resume (unwrap! (get-resume resume-id) (ok false)))
+            (privacy-settings (get-privacy-settings resume-id))
+            (viewer-permissions (get-viewer-permissions resume-id viewer))
+        )
+        (if (is-eq (get owner resume) viewer)
+            (ok true)
+            (if (get is-public privacy-settings)
+                (if (is-eq data-type "experiences")
+                    (ok (get allow-experience-viewing privacy-settings))
+                    (if (is-eq data-type "skills")
+                        (ok (get allow-skill-viewing privacy-settings))
+                        (if (is-eq data-type "badges")
+                            (ok (get allow-badge-viewing privacy-settings))
+                            (ok false)
+                        )
+                    )
+                )
+                (match viewer-permissions
+                    some-permissions
+                    (if (is-eq data-type "experiences")
+                        (ok (get can-view-experiences some-permissions))
+                        (if (is-eq data-type "skills")
+                            (ok (get can-view-skills some-permissions))
+                            (if (is-eq data-type "badges")
+                                (ok (get can-view-badges some-permissions))
+                                (ok false)
+                            )
+                        )
+                    )
+                    (ok false)
+                )
+            )
+        )
+    )
+)
+
+(define-read-only (get-privacy-settings (resume-id uint))
+    (default-to 
+        {
+            is-public: true,
+            allow-skill-viewing: true,
+            allow-experience-viewing: true,
+            allow-badge-viewing: true
+        }
+        (map-get? resume-privacy-settings resume-id)
+    )
+)
+
+(define-read-only (get-viewer-permissions (resume-id uint) (viewer principal))
+    (map-get? authorized-viewers {resume-id: resume-id, viewer: viewer})
+)
+
+(define-read-only (get-experience-private (resume-id uint) (experience-id uint))
+    (if (unwrap-panic (can-view-resume-data resume-id tx-sender "experiences"))
+        (get-experience resume-id experience-id)
+        none
+    )
+)
+
+(define-read-only (get-skill-private (resume-id uint) (skill-id uint))
+    (if (unwrap-panic (can-view-resume-data resume-id tx-sender "skills"))
+        (get-skill resume-id skill-id)
+        none
+    )
+)
+
+(define-read-only (get-badge-private (resume-id uint) (badge-id uint))
+    (if (unwrap-panic (can-view-resume-data resume-id tx-sender "badges"))
+        (get-badge resume-id badge-id)
+        none
+    )
+)
