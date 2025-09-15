@@ -514,3 +514,162 @@
         none
     )
 )
+
+(define-map reputation-scores
+    uint
+    {
+        base-score: uint,
+        verification-bonus: uint,
+        endorsement-bonus: uint,
+        badge-bonus: uint,
+        total-score: uint,
+        last-updated: uint
+    }
+)
+
+(define-map reputation-weights
+    (string-ascii 20)
+    uint
+)
+
+(define-public (initialize-reputation-weights)
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (map-set reputation-weights "verified-exp" u10)
+        (map-set reputation-weights "unverified-exp" u5)
+        (map-set reputation-weights "skill-endorsement" u3)
+        (map-set reputation-weights "verified-badge" u15)
+        (map-set reputation-weights "unverified-badge" u8)
+        (ok true)
+    )
+)
+
+(define-public (update-reputation-weights 
+    (verified-exp-weight uint)
+    (unverified-exp-weight uint)
+    (endorsement-weight uint)
+    (verified-badge-weight uint)
+    (unverified-badge-weight uint)
+)
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (map-set reputation-weights "verified-exp" verified-exp-weight)
+        (map-set reputation-weights "unverified-exp" unverified-exp-weight)
+        (map-set reputation-weights "skill-endorsement" endorsement-weight)
+        (map-set reputation-weights "verified-badge" verified-badge-weight)
+        (map-set reputation-weights "unverified-badge" unverified-badge-weight)
+        (ok true)
+    )
+)
+
+(define-public (calculate-reputation-score (resume-id uint))
+    (let
+        (
+            (resume (unwrap! (get-resume resume-id) err-not-found))
+            (exp-count (default-to u0 (get-experience-count resume-id)))
+            (skill-count (default-to u0 (get-skill-count resume-id)))
+            (badge-count (default-to u0 (get-badge-count resume-id)))
+            (base-score u50)
+        )
+        (let
+            (
+                (exp-score (* exp-count u8))
+                (skill-score (* skill-count u5))
+                (badge-score (* badge-count u12))
+                (total-score (+ (+ (+ base-score exp-score) skill-score) badge-score))
+            )
+            (map-set reputation-scores resume-id
+                {
+                    base-score: base-score,
+                    verification-bonus: exp-score,
+                    endorsement-bonus: skill-score,
+                    badge-bonus: badge-score,
+                    total-score: total-score,
+                    last-updated: burn-block-height
+                }
+            )
+            (ok total-score)
+        )
+    )
+)
+
+(define-public (update-reputation-score 
+    (resume-id uint)
+    (verified-exp-count uint)
+    (total-endorsements uint)
+    (verified-badge-count uint)
+)
+    (let
+        (
+            (resume (unwrap! (get-resume resume-id) err-not-found))
+            (verified-exp-weight (default-to u10 (map-get? reputation-weights "verified-exp")))
+            (endorsement-weight (default-to u3 (map-get? reputation-weights "skill-endorsement")))
+            (verified-badge-weight (default-to u15 (map-get? reputation-weights "verified-badge")))
+            (base-score u50)
+        )
+        (asserts! (is-eq (get owner resume) tx-sender) err-unauthorized)
+        (let
+            (
+                (exp-score (* verified-exp-count verified-exp-weight))
+                (skill-score (* total-endorsements endorsement-weight))
+                (badge-score (* verified-badge-count verified-badge-weight))
+                (total-score (+ (+ (+ base-score exp-score) skill-score) badge-score))
+            )
+            (map-set reputation-scores resume-id
+                {
+                    base-score: base-score,
+                    verification-bonus: exp-score,
+                    endorsement-bonus: skill-score,
+                    badge-bonus: badge-score,
+                    total-score: total-score,
+                    last-updated: burn-block-height
+                }
+            )
+            (ok total-score)
+        )
+    )
+)
+
+(define-read-only (get-reputation-score (resume-id uint))
+    (map-get? reputation-scores resume-id)
+)
+
+(define-read-only (get-reputation-weights)
+    {
+        verified-exp: (default-to u10 (map-get? reputation-weights "verified-exp")),
+        unverified-exp: (default-to u5 (map-get? reputation-weights "unverified-exp")),
+        skill-endorsement: (default-to u3 (map-get? reputation-weights "skill-endorsement")),
+        verified-badge: (default-to u15 (map-get? reputation-weights "verified-badge")),
+        unverified-badge: (default-to u8 (map-get? reputation-weights "unverified-badge"))
+    }
+)
+
+(define-read-only (get-reputation-rank (resume-id uint))
+    (let
+        (
+            (score-data (get-reputation-score resume-id))
+        )
+        (match score-data
+            some-score
+            (let
+                (
+                    (total (get total-score some-score))
+                )
+                (if (<= total u75)
+                    "Bronze"
+                    (if (<= total u150)
+                        "Silver"
+                        (if (<= total u250)
+                            "Gold"
+                            (if (<= total u400)
+                                "Platinum"
+                                "Diamond"
+                            )
+                        )
+                    )
+                )
+            )
+            "Unranked"
+        )
+    )
+)

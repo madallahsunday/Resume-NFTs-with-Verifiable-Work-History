@@ -7,6 +7,10 @@ A blockchain-based solution for creating verifiable digital resumes using NFTs o
 - Mint resume NFTs with basic profile information
 - Add work experiences to resumes
 - Get work experiences verified by employers
+- Skills system with peer endorsements
+- Achievement badges with authorized verification
+- Privacy controls and viewer permissions
+- **✨ Reputation Scoring System** - Dynamic trust scores based on verified credentials
 - Transfer resume ownership
 - View resume and experience details
 
@@ -35,6 +39,24 @@ Employers can verify work experience:
 
 ```clarity
 (contract-call? .resume-nfts get-resume u1)
+```
+
+### 🏆 Reputation System
+
+#### Calculate Basic Reputation Score
+```clarity
+(contract-call? .resume-nfts calculate-reputation-score u1)
+```
+
+#### Update Detailed Reputation Score
+```clarity
+(contract-call? .resume-nfts update-reputation-score u1 u3 u15 u2)
+```
+
+#### View Reputation Details
+```clarity
+(contract-call? .resume-nfts get-reputation-score u1)
+(contract-call? .resume-nfts get-reputation-rank u1)
 ```
 
 ## 🔒 Security
