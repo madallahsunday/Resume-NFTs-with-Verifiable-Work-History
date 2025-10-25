@@ -673,3 +673,145 @@
         )
     )
 )
+
+(define-constant err-referral-exists (err u108))
+(define-constant err-self-referral (err u109))
+(define-constant err-invalid-status (err u110))
+
+(define-map professional-referrals
+    {resume-id: uint, referral-id: uint}
+    {
+        referrer: principal,
+        referrer-company: (string-ascii 100),
+        referrer-title: (string-ascii 100),
+        relationship: (string-ascii 50),
+        recommendation-text: (string-ascii 500),
+        status: (string-ascii 20),
+        created-at: uint,
+        accepted-at: (optional uint)
+    }
+)
+
+(define-map referral-counters
+    uint
+    uint
+)
+
+(define-map referral-status-counts
+    {resume-id: uint, status: (string-ascii 20)}
+    uint
+)
+
+(define-public (create-referral
+    (resume-id uint)
+    (referrer-company (string-ascii 100))
+    (referrer-title (string-ascii 100))
+    (relationship (string-ascii 50))
+    (recommendation-text (string-ascii 500))
+)
+    (let
+        (
+            (referral-id (default-to u0 (get-referral-count resume-id)))
+            (new-id (+ referral-id u1))
+            (resume (unwrap! (get-resume resume-id) err-not-found))
+            (referral-key {resume-id: resume-id, referral-id: referral-id})
+        )
+        (asserts! (not (is-eq (get owner resume) tx-sender)) err-self-referral)
+        (map-set professional-referrals referral-key
+            {
+                referrer: tx-sender,
+                referrer-company: referrer-company,
+                referrer-title: referrer-title,
+                relationship: relationship,
+                recommendation-text: recommendation-text,
+                status: "pending",
+                created-at: burn-block-height,
+                accepted-at: none
+            }
+        )
+        (map-set referral-counters resume-id new-id)
+        (increment-status-count resume-id "pending")
+        (ok referral-id)
+    )
+)
+
+(define-public (accept-referral (resume-id uint) (referral-id uint))
+    (let
+        (
+            (referral-key {resume-id: resume-id, referral-id: referral-id})
+            (referral (unwrap! (get-referral resume-id referral-id) err-not-found))
+            (resume (unwrap! (get-resume resume-id) err-not-found))
+        )
+        (asserts! (is-eq (get owner resume) tx-sender) err-unauthorized)
+        (asserts! (is-eq (get status referral) "pending") err-invalid-status)
+        (decrement-status-count resume-id "pending")
+        (increment-status-count resume-id "accepted")
+        (map-set professional-referrals referral-key
+            (merge referral {
+                status: "accepted",
+                accepted-at: (some burn-block-height)
+            })
+        )
+        (ok true)
+    )
+)
+
+(define-public (reject-referral (resume-id uint) (referral-id uint))
+    (let
+        (
+            (referral-key {resume-id: resume-id, referral-id: referral-id})
+            (referral (unwrap! (get-referral resume-id referral-id) err-not-found))
+            (resume (unwrap! (get-resume resume-id) err-not-found))
+        )
+        (asserts! (is-eq (get owner resume) tx-sender) err-unauthorized)
+        (asserts! (is-eq (get status referral) "pending") err-invalid-status)
+        (decrement-status-count resume-id "pending")
+        (increment-status-count resume-id "rejected")
+        (map-set professional-referrals referral-key
+            (merge referral {status: "rejected"})
+        )
+        (ok true)
+    )
+)
+
+(define-private (increment-status-count (resume-id uint) (status (string-ascii 20)))
+    (let
+        (
+            (current-count (default-to u0 (get-status-count resume-id status)))
+            (new-count (+ current-count u1))
+        )
+        (map-set referral-status-counts {resume-id: resume-id, status: status} new-count)
+        new-count
+    )
+)
+
+(define-private (decrement-status-count (resume-id uint) (status (string-ascii 20)))
+    (let
+        (
+            (current-count (default-to u0 (get-status-count resume-id status)))
+            (new-count (if (> current-count u0) (- current-count u1) u0))
+        )
+        (map-set referral-status-counts {resume-id: resume-id, status: status} new-count)
+        new-count
+    )
+)
+
+(define-read-only (get-referral (resume-id uint) (referral-id uint))
+    (map-get? professional-referrals {resume-id: resume-id, referral-id: referral-id})
+)
+
+(define-read-only (get-referral-count (resume-id uint))
+    (map-get? referral-counters resume-id)
+)
+
+(define-read-only (get-status-count (resume-id uint) (status (string-ascii 20)))
+    (map-get? referral-status-counts {resume-id: resume-id, status: status})
+)
+
+(define-read-only (get-accepted-referrals-count (resume-id uint))
+    (default-to u0 (get-status-count resume-id "accepted"))
+)
+
+(define-read-only (get-pending-referrals-count (resume-id uint))
+    (default-to u0 (get-status-count resume-id "pending"))
+)
