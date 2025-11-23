@@ -815,3 +815,259 @@
 (define-read-only (get-pending-referrals-count (resume-id uint))
     (default-to u0 (get-status-count resume-id "pending"))
 )
+
+(define-constant err-analytics-disabled (err u111))
+
+(define-map resume-analytics
+    uint
+    {
+        total-views: uint,
+        unique-viewers: uint,
+        skill-views: uint,
+        experience-views: uint,
+        badge-views: uint,
+        total-interactions: uint,
+        last-viewed-at: uint,
+        analytics-enabled: bool
+    }
+)
+
+(define-map resume-viewers
+    {resume-id: uint, viewer: principal}
+    {
+        view-count: uint,
+        first-viewed-at: uint,
+        last-viewed-at: uint,
+        viewed-skills: uint,
+        viewed-experiences: uint,
+        viewed-badges: uint
+    }
+)
+
+(define-map viewer-counters
+    uint
+    uint
+)
+
+(define-public (enable-analytics (resume-id uint))
+    (let
+        (
+            (resume (unwrap! (get-resume resume-id) err-not-found))
+        )
+        (asserts! (is-eq (get owner resume) tx-sender) err-unauthorized)
+        (map-set resume-analytics resume-id
+            {
+                total-views: u0,
+                unique-viewers: u0,
+                skill-views: u0,
+                experience-views: u0,
+                badge-views: u0,
+                total-interactions: u0,
+                last-viewed-at: u0,
+                analytics-enabled: true
+            }
+        )
+        (ok true)
+    )
+)
+
+(define-public (disable-analytics (resume-id uint))
+    (let
+        (
+            (resume (unwrap! (get-resume resume-id) err-not-found))
+            (current-analytics (unwrap! (get-analytics resume-id) err-not-found))
+        )
+        (asserts! (is-eq (get owner resume) tx-sender) err-unauthorized)
+        (map-set resume-analytics resume-id
+            (merge current-analytics {analytics-enabled: false})
+        )
+        (ok true)
+    )
+)
+
+(define-public (track-resume-view (resume-id uint))
+    (let
+        (
+            (resume (unwrap! (get-resume resume-id) err-not-found))
+            (analytics (unwrap! (get-analytics resume-id) err-analytics-disabled))
+            (viewer-key {resume-id: resume-id, viewer: tx-sender})
+            (existing-viewer (map-get? resume-viewers viewer-key))
+        )
+        (asserts! (get analytics-enabled analytics) err-analytics-disabled)
+        (asserts! (not (is-eq (get owner resume) tx-sender)) err-unauthorized)
+        (match existing-viewer
+            viewer-data
+            (begin
+                (map-set resume-viewers viewer-key
+                    (merge viewer-data {
+                        view-count: (+ (get view-count viewer-data) u1),
+                        last-viewed-at: burn-block-height
+                    })
+                )
+                (map-set resume-analytics resume-id
+                    (merge analytics {
+                        total-views: (+ (get total-views analytics) u1),
+                        last-viewed-at: burn-block-height,
+                        total-interactions: (+ (get total-interactions analytics) u1)
+                    })
+                )
+            )
+            (begin
+                (map-set resume-viewers viewer-key
+                    {
+                        view-count: u1,
+                        first-viewed-at: burn-block-height,
+                        last-viewed-at: burn-block-height,
+                        viewed-skills: u0,
+                        viewed-experiences: u0,
+                        viewed-badges: u0
+                    }
+                )
+                (let
+                    (
+                        (unique-count (default-to u0 (map-get? viewer-counters resume-id)))
+                    )
+                    (map-set viewer-counters resume-id (+ unique-count u1))
+                    (map-set resume-analytics resume-id
+                        (merge analytics {
+                            total-views: (+ (get total-views analytics) u1),
+                            unique-viewers: (+ unique-count u1),
+                            last-viewed-at: burn-block-height,
+                            total-interactions: (+ (get total-interactions analytics) u1)
+                        })
+                    )
+                )
+            )
+        )
+        (ok true)
+    )
+)
+
+(define-public (track-skill-view (resume-id uint) (skill-id uint))
+    (let
+        (
+            (analytics (unwrap! (get-analytics resume-id) err-analytics-disabled))
+            (viewer-key {resume-id: resume-id, viewer: tx-sender})
+            (viewer-data (unwrap! (map-get? resume-viewers viewer-key) err-not-found))
+        )
+        (asserts! (get analytics-enabled analytics) err-analytics-disabled)
+        (map-set resume-viewers viewer-key
+            (merge viewer-data {
+                viewed-skills: (+ (get viewed-skills viewer-data) u1)
+            })
+        )
+        (map-set resume-analytics resume-id
+            (merge analytics {
+                skill-views: (+ (get skill-views analytics) u1),
+                total-interactions: (+ (get total-interactions analytics) u1)
+            })
+        )
+        (ok true)
+    )
+)
+
+(define-public (track-experience-view (resume-id uint) (experience-id uint))
+    (let
+        (
+            (analytics (unwrap! (get-analytics resume-id) err-analytics-disabled))
+            (viewer-key {resume-id: resume-id, viewer: tx-sender})
+            (viewer-data (unwrap! (map-get? resume-viewers viewer-key) err-not-found))
+        )
+        (asserts! (get analytics-enabled analytics) err-analytics-disabled)
+        (map-set resume-viewers viewer-key
+            (merge viewer-data {
+                viewed-experiences: (+ (get viewed-experiences viewer-data) u1)
+            })
+        )
+        (map-set resume-analytics resume-id
+            (merge analytics {
+                experience-views: (+ (get experience-views analytics) u1),
+                total-interactions: (+ (get total-interactions analytics) u1)
+            })
+        )
+        (ok true)
+    )
+)
+
+(define-public (track-badge-view (resume-id uint) (badge-id uint))
+    (let
+        (
+            (analytics (unwrap! (get-analytics resume-id) err-analytics-disabled))
+            (viewer-key {resume-id: resume-id, viewer: tx-sender})
+            (viewer-data (unwrap! (map-get? resume-viewers viewer-key) err-not-found))
+        )
+        (asserts! (get analytics-enabled analytics) err-analytics-disabled)
+        (map-set resume-viewers viewer-key
+            (merge viewer-data {
+                viewed-badges: (+ (get viewed-badges viewer-data) u1)
+            })
+        )
+        (map-set resume-analytics resume-id
+            (merge analytics {
+                badge-views: (+ (get badge-views analytics) u1),
+                total-interactions: (+ (get total-interactions analytics) u1)
+            })
+        )
+        (ok true)
+    )
+)
+
+(define-read-only (get-analytics (resume-id uint))
+    (map-get? resume-analytics resume-id)
+)
+
+(define-read-only (get-viewer-data (resume-id uint) (viewer principal))
+    (map-get? resume-viewers {resume-id: resume-id, viewer: viewer})
+)
+
+(define-read-only (get-unique-viewer-count (resume-id uint))
+    (default-to u0 (map-get? viewer-counters resume-id))
+)
+
+(define-read-only (calculate-engagement-rate (resume-id uint))
+    (let
+        (
+            (analytics (get-analytics resume-id))
+        )
+        (match analytics
+            some-analytics
+            (let
+                (
+                    (total-views (get total-views some-analytics))
+                    (interactions (get total-interactions some-analytics))
+                )
+                (if (> total-views u0)
+                    (ok (/ (* interactions u100) total-views))
+                    (ok u0)
+                )
+            )
+            (ok u0)
+        )
+    )
+)
+
+(define-read-only (get-most-viewed-section (resume-id uint))
+    (let
+        (
+            (analytics (get-analytics resume-id))
+        )
+        (match analytics
+            some-analytics
+            (let
+                (
+                    (skill-views (get skill-views some-analytics))
+                    (exp-views (get experience-views some-analytics))
+                    (badge-views (get badge-views some-analytics))
+                )
+                (if (and (>= skill-views exp-views) (>= skill-views badge-views))
+                    "skills"
+                    (if (>= exp-views badge-views)
+                        "experiences"
+                        "badges"
+                    )
+                )
+            )
+            "none"
+        )
+    )
+)
